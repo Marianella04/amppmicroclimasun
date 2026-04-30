@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inspección de Corrosión — Base de Datos</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d0f10; --surface: #141618; --surface2: #1c1f21; --surface3: #232729;
+    --border: #2a2e30; --border2: #3a3f42; --text: #e8eaeb; --text2: #8a9099;
+    --text3: #5a6068; --accent: #c8a84b; --accent2: #a0842f;
+    --accent-dim: rgba(200,168,75,0.12); --red: #d45a4a; --red-dim: rgba(212,90,74,0.12);
+    --green: #4aad7f; --green-dim: rgba(74,173,127,0.12); --orange: #d4854a;
+    --orange-dim: rgba(212,133,74,0.12); --font: 'IBM Plex Sans', sans-serif;
+    --mono: 'IBM Plex Mono', monospace; --radius: 6px; --radius-lg: 10px;
+  }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* SYNC INDICATOR */
+  .sync-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); display: inline-block;
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s infinite;
+  }
+  .sync-dot.offline { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
+  .sync-dot.syncing { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .sync-label { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+
+  /* HEADER */
+  header {
+    border-bottom: 1px solid var(--border); padding: 0 2rem;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 60px; position: sticky; top: 0; background: var(--bg); z-index: 100;
+  }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon {
+    width: 32px; height: 32px; border: 1.5px solid var(--accent);
+    border-radius: 4px; display: flex; align-items: center; justify-content: center;
+  }
+  .logo-icon svg { width: 16px; height: 16px; stroke: var(--accent); fill: none; stroke-width: 2; }
+  .logo-text { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+  .logo-sub { font-size: 11px; color: var(--text3); font-family: var(--mono); letter-spacing: 0.05em; }
+  .header-actions { display: flex; align-items: center; gap: 12px; }
+  .sync-status { display: flex; align-items: center; gap: 6px; }
+
+  .btn {
+    font-family: var(--font); font-size: 13px; font-weight: 500;
+    padding: 7px 14px; border-radius: var(--radius); cursor: pointer;
+    transition: all 0.15s; border: none; outline: none;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border2); }
+  .btn-ghost:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
+  .btn-primary { background: var(--accent); color: #0d0f10; font-weight: 600; }
+  .btn-primary:hover:not(:disabled) { background: #d4b05c; }
+  .btn-danger { background: transparent; color: var(--red); border: 1px solid rgba(212,90,74,0.3); }
+  .btn-danger:hover:not(:disabled) { background: var(--red-dim); }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+  /* STATS */
+  .stats-bar {
+    padding: 1rem 2rem; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 2rem;
+  }
+  .stat { display: flex; align-items: baseline; gap: 6px; }
+  .stat-num { font-family: var(--mono); font-size: 22px; font-weight: 500; color: var(--accent); }
+  .stat-label { font-size: 12px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.07em; }
+  .stat-divider { width: 1px; height: 30px; background: var(--border); }
+
+  /* TOOLBAR */
+  .toolbar {
+    padding: 1rem 2rem; display: flex; align-items: center;
+    justify-content: space-between; gap: 1rem;
+  }
+  .toolbar-left { display: flex; gap: 8px; }
+  .search-input {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--font); font-size: 13px; padding: 7px 12px;
+    border-radius: var(--radius); width: 220px; outline: none; transition: border 0.15s;
+  }
+  .search-input:focus { border-color: var(--accent); }
+  .search-input::placeholder { color: var(--text3); }
+
+  /* MOSAIC */
+  .mosaic {
+    padding: 1.5rem 2rem;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.5rem;
+  }
+
+  /* FICHA CARD */
+  .ficha-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); overflow: hidden;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .ficha-card:hover { border-color: var(--border2); transform: translateY(-2px); }
+  .ficha-header {
+    padding: 14px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .ficha-id { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: 0.08em; }
+  .ficha-date { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+
+  .ficha-photos {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 2px; background: var(--border); max-height: 220px; overflow: hidden;
+  }
+  .ficha-photos.photos-1 { grid-template-columns: 1fr; }
+  .ficha-photos.photos-3 > :first-child { grid-column: 1 / -1; }
+  .photo-slot { aspect-ratio: 4/3; overflow: hidden; background: var(--surface2); }
+  .photo-slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .no-photo {
+    width: 100%; height: 100%; min-height: 120px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text3); font-size: 11px; font-family: var(--mono);
+    flex-direction: column; gap: 6px;
+  }
+  .no-photo svg { width: 24px; height: 24px; stroke: var(--text3); fill: none; opacity: 0.4; }
+
+  .ficha-body { padding: 14px 16px; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+  .field-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px; font-family: var(--mono); }
+  .field-value { font-size: 13px; color: var(--text); font-weight: 500; }
+  .field-full { grid-column: 1 / -1; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; font-family: var(--mono); letter-spacing: 0.05em; }
+  .badge-bajo { background: var(--green-dim); color: var(--green); }
+  .badge-mediobajo { background: rgba(74,173,127,0.07); color: #3a9a6f; }
+  .badge-medio { background: var(--orange-dim); color: var(--orange); }
+  .badge-medioalto { background: rgba(212,133,74,0.2); color: #e0924f; }
+  .badge-alto { background: var(--red-dim); color: var(--red); }
+
+  .ficha-footer {
+    padding: 10px 16px; border-top: 1px solid var(--border);
+    display: flex; justify-content: flex-end; gap: 6px;
+  }
+
+  /* EMPTY */
+  .empty-state { grid-column: 1 / -1; padding: 5rem 2rem; text-align: center; }
+  .empty-icon {
+    width: 64px; height: 64px; border: 1.5px solid var(--border2); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; margin: 0 auto 1.5rem;
+  }
+  .empty-icon svg { width: 28px; height: 28px; stroke: var(--text3); fill: none; }
+  .empty-title { font-size: 16px; font-weight: 500; color: var(--text2); margin-bottom: 0.5rem; }
+  .empty-sub { font-size: 13px; color: var(--text3); }
+
+  /* LOADING */
+  .loading-state { grid-column: 1 / -1; padding: 5rem 2rem; text-align: center; }
+  .spinner {
+    width: 32px; height: 32px; border: 2px solid var(--border2);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.7s linear infinite; margin: 0 auto 1rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* MODAL */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+    z-index: 200; align-items: center; justify-content: center; padding: 1rem;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: var(--radius-lg); width: 100%; max-width: 680px;
+    max-height: 90vh; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: var(--border2) transparent;
+  }
+  .modal-header {
+    padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; background: var(--surface); z-index: 10;
+  }
+  .modal-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .modal-title span { font-family: var(--mono); font-size: 11px; color: var(--accent); font-weight: 400; letter-spacing: 0.06em; }
+  .modal-close { background: none; border: none; color: var(--text3); cursor: pointer; padding: 4px; border-radius: 4px; font-size: 20px; line-height: 1; transition: color 0.15s; }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { padding: 1.5rem; }
+  .modal-footer {
+    padding: 1rem 1.5rem; border-top: 1px solid var(--border);
+    display: flex; justify-content: flex-end; gap: 8px;
+    position: sticky; bottom: 0; background: var(--surface);
+  }
+
+  /* FORM */
+  .form-section { margin-bottom: 1.5rem; }
+  .form-section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--text3); font-family: var(--mono); margin-bottom: 1rem;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+  .form-grid .full { grid-column: 1 / -1; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-label { font-size: 12px; color: var(--text2); font-weight: 500; }
+  .form-control {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--font); font-size: 13px; padding: 8px 10px;
+    border-radius: var(--radius); outline: none; transition: border 0.15s; width: 100%;
+    -webkit-appearance: none; appearance: none;
+  }
+  .form-control:focus { border-color: var(--accent); }
+  select.form-control {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%235a6068' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;
+  }
+  select.form-control option { background: #1c1f21; }
+
+  /* PHOTO UPLOAD */
+  .photo-upload-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .photo-slot-upload {
+    aspect-ratio: 1; border: 1.5px dashed var(--border2); border-radius: var(--radius);
+    overflow: hidden; position: relative; cursor: pointer; transition: border-color 0.15s;
+    background: var(--surface2);
+  }
+  .photo-slot-upload:hover { border-color: var(--accent); }
+  .photo-slot-upload img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .photo-slot-upload input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .photo-placeholder {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 4px;
+    color: var(--text3); font-size: 10px; font-family: var(--mono); pointer-events: none;
+  }
+  .photo-placeholder svg { width: 20px; height: 20px; stroke: var(--text3); fill: none; opacity: 0.5; }
+  .photo-remove {
+    position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.7);
+    border: none; color: #fff; border-radius: 3px; width: 20px; height: 20px;
+    font-size: 14px; line-height: 1; cursor: pointer; display: none;
+    align-items: center; justify-content: center; z-index: 2;
+  }
+  .photo-slot-upload:hover .photo-remove { display: flex; }
+
+  .upload-progress {
+    font-size: 11px; color: var(--text3); font-family: var(--mono);
+    text-align: center; margin-top: 8px; min-height: 16px;
+  }
+
+  .percent-wrapper { position: relative; display: flex; align-items: center; }
+  .percent-wrapper .form-control { padding-right: 30px; }
+  .percent-symbol { position: absolute; right: 10px; color: var(--text3); font-size: 13px; pointer-events: none; }
+
+  /* TOAST */
+  #toast {
+    position: fixed; bottom: 2rem; right: 2rem; background: var(--surface3);
+    border: 1px solid var(--border2); color: var(--text); padding: 10px 16px;
+    border-radius: var(--radius); font-size: 13px; font-family: var(--mono);
+    z-index: 9999; opacity: 0; transform: translateY(10px);
+    transition: all 0.2s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M2 12h4M18 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+    </div>
+    <div>
+      <div class="logo-text">Inspección de Corrosión</div>
+      <div class="logo-sub">mapeo-microclimas-y-corrosion</div>
+    </div>
+  </div>
+  <div class="header-actions">
+    <div class="sync-status">
+      <div class="sync-dot" id="syncDot"></div>
+      <span class="sync-label" id="syncLabel">Conectando...</span>
+    </div>
+    <button class="btn btn-primary" id="addFichaBtn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Añadir Ficha
+    </button>
+  </div>
+</header>
+
+<div class="stats-bar">
+  <div class="stat"><span class="stat-num" id="stat-total">—</span><span class="stat-label">Fichas</span></div>
+  <div class="stat-divider"></div>
+  <div class="stat"><span class="stat-num" id="stat-alto">—</span><span class="stat-label">Riesgo Alto</span></div>
+  <div class="stat-divider"></div>
+  <div class="stat"><span class="stat-num" id="stat-medio">—</span><span class="stat-label">Riesgo Medio</span></div>
+  <div class="stat-divider"></div>
+  <div class="stat"><span class="stat-num" id="stat-bajo">—</span><span class="stat-label">Riesgo Bajo</span></div>
+</div>
+
+<div class="toolbar">
+  <div class="toolbar-left">
+    <input type="text" class="search-input" id="searchInput" placeholder="Buscar por cuadrante, material..." >
+    <select class="form-control" style="width:160px;padding:7px 28px 7px 10px;" id="filterSelect">
+      <option value="">Todos los riesgos</option>
+      <option>Bajo</option><option>Medio-bajo</option><option>Medio</option>
+      <option>Medio-alto</option><option>Alto</option>
+    </select>
+  </div>
+</div>
+
+<div class="mosaic" id="mosaic">
+  <div class="loading-state">
+    <div class="spinner"></div>
+    <p style="color:var(--text3);font-size:13px;font-family:var(--mono)">Conectando con Firebase...</p>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay" >
+  <div class="modal" id="modalBox">
+    <div class="modal-header">
+      <div class="modal-title">Nueva Ficha Técnica <span id="modalSubtitle">NUEVO REGISTRO</span></div>
+      <button class="modal-close" id="closeModalBtn">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-section">
+        <div class="form-section-title">Datos generales</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Fecha</label>
+            <input type="date" id="f-fecha" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Cuadrante</label>
+            <select id="f-cuadrante" class="form-control">
+              <option value="">— Seleccionar —</option>
+              <option>1</option><option>2</option><option>3</option>
+              <option>4</option><option>5</option><option>6</option><option>7</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Material</label>
+            <select id="f-material" class="form-control">
+              <option value="">— Seleccionar —</option>
+              <option>Acero</option><option>Aluminio</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tipo de estructura</label>
+            <select id="f-estructura" class="form-control">
+              <option value="">— Seleccionar —</option>
+              <option>Funcional</option><option>Estructural</option><option>Decorativa</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Datos de corrosión</div>
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label">Tipo de corrosión</label>
+            <select id="f-tipo-corrosion" class="form-control">
+              <option value="">— Seleccionar —</option>
+              <option>Uniforme</option><option>Por picaduras</option>
+              <option>Por hendiduras</option><option>Galvánica</option><option>Por erosión</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Porcentaje de corrosión</label>
+            <div class="percent-wrapper">
+              <input type="number" id="f-porcentaje" class="form-control" min="0" max="100" placeholder="0 – 100">
+              <span class="percent-symbol">%</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Nivel de corrosión</label>
+            <select id="f-nivel-corrosion" class="form-control">
+              <option value="">— Seleccionar —</option>
+              <option>Bajo</option><option>Medio-bajo</option><option>Medio</option>
+              <option>Medio-alto</option><option>Alto</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Nivel de riesgo</label>
+            <select id="f-riesgo" class="form-control">
+              <option value="">— Seleccionar —</option>
+              <option>Bajo</option><option>Medio-bajo</option><option>Medio</option>
+              <option>Medio-alto</option><option>Alto</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Fotografías (1 – 4)</div>
+        <div class="photo-upload-grid" id="photoGrid"></div>
+        <div class="upload-progress" id="uploadProgress"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="cancelBtn">Cancelar</button>
+      <button class="btn btn-primary" id="saveBtn" id="saveBtn">Guardar Ficha</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp, query, orderBy } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDjd4YteqoHaVPGxS_-MXfJqhriVekDvm4",
+  authDomain: "mapeo-microclimas-y-corrosion.firebaseapp.com",
+  projectId: "mapeo-microclimas-y-corrosion",
+  storageBucket: "mapeo-microclimas-y-corrosion.firebasestorage.app",
+  messagingSenderId: "528823116371",
+  appId: "1:528823116371:web:0e4deeb341b48c0b15dca6",
+  measurementId: "G-2ECENKEYCW"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let fichas = [];
+let editingId = null;
+let filterRiesgo = '';
+let photoData = [null, null, null, null];
+
+// IMAGE COMPRESSION
+function compressImage(file, maxW=900, quality=0.75) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.width, h = img.height;
+      if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+// SYNC STATUS
+function setSyncStatus(state) {
+  const dot = document.getElementById('syncDot');
+  const label = document.getElementById('syncLabel');
+  dot.className = 'sync-dot' + (state==='offline' ? ' offline' : state==='syncing' ? ' syncing' : '');
+  label.textContent = state==='online' ? 'En tiempo real' : state==='syncing' ? 'Sincronizando...' : 'Sin conexión';
+}
+
+// REALTIME LISTENER
+const q = query(collection(db, 'fichas'), orderBy('createdAt', 'desc'));
+onSnapshot(q,
+  snapshot => {
+    fichas = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    setSyncStatus('online');
+    updateStats();
+    renderCards();
+  },
+  err => { console.error(err); setSyncStatus('offline'); showToast('Error de conexión con Firebase'); }
+);
+
+// STATS
+function updateStats() {
+  document.getElementById('stat-total').textContent = fichas.length;
+  document.getElementById('stat-alto').textContent = fichas.filter(f => f.riesgo==='Alto'||f.riesgo==='Medio-alto').length;
+  document.getElementById('stat-medio').textContent = fichas.filter(f => f.riesgo==='Medio').length;
+  document.getElementById('stat-bajo').textContent = fichas.filter(f => f.riesgo==='Bajo'||f.riesgo==='Medio-bajo').length;
+}
+
+function getBadgeClass(level) {
+  return 'badge-'+({'Bajo':'bajo','Medio-bajo':'mediobajo','Medio':'medio','Medio-alto':'medioalto','Alto':'alto'}[level]||'bajo');
+}
+function badge(lvl) { return lvl ? '<span class="badge '+getBadgeClass(lvl)+'">'+lvl+'</span>' : '—'; }
+function fmt(d) { if(!d) return '—'; const p=d.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }
+
+// RENDER
+function renderCards() {
+  const sq = document.getElementById('searchInput').value.toLowerCase();
+  const container = document.getElementById('mosaic');
+  let filtered = fichas.filter(f => {
+    const ms = !sq ||
+      (f.cuadrante && String(f.cuadrante).includes(sq)) ||
+      (f.material && f.material.toLowerCase().includes(sq)) ||
+      (f.tipoCorrosion && f.tipoCorrosion.toLowerCase().includes(sq)) ||
+      (f.estructura && f.estructura.toLowerCase().includes(sq));
+    return ms && (!filterRiesgo || f.riesgo===filterRiesgo);
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="empty-title">'+(fichas.length===0?'Sin fichas aún':'Sin resultados')+'</p><p class="empty-sub">'+(fichas.length===0?'Haz clic en "Añadir Ficha" para empezar.':'Prueba con otros filtros.')+'</p></div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(f => {
+    const photos = (f.photos||[]).filter(Boolean);
+    const photoHTML = photos.length===0
+      ? '<div class="ficha-photos photos-1"><div class="photo-slot"><div class="no-photo"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>Sin fotos</div></div></div>'
+      : '<div class="ficha-photos photos-'+photos.length+'">'+photos.map(p=>'<div class="photo-slot"><img src="'+p+'" alt="foto" loading="lazy"></div>').join('')+'</div>';
+
+    return '<div class="ficha-card">'+
+      '<div class="ficha-header"><span class="ficha-id">FC-'+f.id.slice(-6).toUpperCase()+'</span><span class="ficha-date">'+fmt(f.fecha)+'</span></div>'+
+      photoHTML+
+      '<div class="ficha-body"><div class="field-grid">'+
+      '<div class="field-item"><div class="field-label">Cuadrante</div><div class="field-value">'+(f.cuadrante||'—')+'</div></div>'+
+      '<div class="field-item"><div class="field-label">Material</div><div class="field-value">'+(f.material||'—')+'</div></div>'+
+      '<div class="field-item"><div class="field-label">Tipo de estructura</div><div class="field-value">'+(f.estructura||'—')+'</div></div>'+
+      '<div class="field-item"><div class="field-label">% Corrosión</div><div class="field-value">'+(f.porcentaje!==''&&f.porcentaje!==undefined?f.porcentaje+'%':'—')+'</div></div>'+
+      '<div class="field-item field-full"><div class="field-label">Tipo de corrosión</div><div class="field-value">'+(f.tipoCorrosion||'—')+'</div></div>'+
+      '<div class="field-item"><div class="field-label">Nivel de corrosión</div><div class="field-value">'+badge(f.nivelCorrosion)+'</div></div>'+
+      '<div class="field-item"><div class="field-label">Nivel de riesgo</div><div class="field-value">'+badge(f.riesgo)+'</div></div>'+
+      '</div></div>'+
+      '<div class="ficha-footer">'+
+      '<button class="btn btn-ghost btn-sm" data-edit="'+f.id+'"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Editar</button>'+
+      '<button class="btn btn-danger btn-sm" data-delete="'+f.id+'"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>Eliminar</button>'+
+      '</div></div>';
+  }).join('');
+}
+
+// PHOTO SLOTS
+function buildPhotoSlots() {
+  photoData = [null, null, null, null];
+  const grid = document.getElementById('photoGrid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 4; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'photo-slot-upload';
+    slot.dataset.slot = i;
+    slot.innerHTML =
+      '<div class="photo-placeholder" id="pph-'+i+'"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>Foto '+(i+1)+'</div>'+
+      '<img id="pimg-'+i+'" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;position:absolute;inset:0;">'+
+      '<button class="photo-remove" data-remove="'+i+'">×</button>'+
+      '<input type="file" accept="image/*" data-photo="'+i+'">';
+    grid.appendChild(slot);
+  }
+}
+
+// OPEN MODAL
+function openModal(id) {
+  editingId = id || null;
+  buildPhotoSlots();
+  document.getElementById('modalSubtitle').textContent = editingId ? 'EDITAR REGISTRO' : 'NUEVO REGISTRO';
+  document.getElementById('uploadProgress').textContent = '';
+
+  if (editingId) {
+    const f = fichas.find(x => x.id===editingId);
+    if (f) {
+      document.getElementById('f-fecha').value = f.fecha||'';
+      document.getElementById('f-cuadrante').value = f.cuadrante||'';
+      document.getElementById('f-material').value = f.material||'';
+      document.getElementById('f-estructura').value = f.estructura||'';
+      document.getElementById('f-tipo-corrosion').value = f.tipoCorrosion||'';
+      document.getElementById('f-porcentaje').value = f.porcentaje!==undefined?f.porcentaje:'';
+      document.getElementById('f-nivel-corrosion').value = f.nivelCorrosion||'';
+      document.getElementById('f-riesgo').value = f.riesgo||'';
+      (f.photos||[]).forEach((b64,i) => {
+        if (b64) {
+          photoData[i]=b64;
+          document.getElementById('pimg-'+i).src=b64;
+          document.getElementById('pimg-'+i).style.display='block';
+          document.getElementById('pph-'+i).style.display='none';
+        }
+      });
+    }
+  } else {
+    ['f-cuadrante','f-material','f-estructura','f-tipo-corrosion','f-porcentaje','f-nivel-corrosion','f-riesgo'].forEach(id => {
+      document.getElementById(id).value='';
+    });
+    document.getElementById('f-fecha').value = new Date().toISOString().split('T')[0];
+  }
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+  editingId = null;
+}
+
+// SAVE
+async function saveFicha() {
+  const fecha = document.getElementById('f-fecha').value;
+  const cuadrante = document.getElementById('f-cuadrante').value;
+  const material = document.getElementById('f-material').value;
+  if (!fecha||!cuadrante||!material) { showToast('Fecha, cuadrante y material son obligatorios'); return; }
+
+  const saveBtn = document.getElementById('saveBtn');
+  saveBtn.disabled = true; saveBtn.textContent = 'Guardando...';
+  setSyncStatus('syncing');
+
+  try {
+    const data = {
+      fecha, cuadrante, material,
+      estructura: document.getElementById('f-estructura').value,
+      tipoCorrosion: document.getElementById('f-tipo-corrosion').value,
+      porcentaje: document.getElementById('f-porcentaje').value,
+      nivelCorrosion: document.getElementById('f-nivel-corrosion').value,
+      riesgo: document.getElementById('f-riesgo').value,
+      photos: photoData.map(p => p||null)
+    };
+    if (editingId) {
+      await updateDoc(doc(db,'fichas',editingId), data);
+      showToast('Ficha actualizada');
+    } else {
+      data.createdAt = serverTimestamp();
+      await addDoc(collection(db,'fichas'), data);
+      showToast('Ficha guardada en la nube');
+    }
+    closeModal();
+  } catch(err) {
+    console.error(err);
+    showToast('Error al guardar: '+err.message);
+    setSyncStatus('online');
+  } finally {
+    saveBtn.disabled=false; saveBtn.textContent='Guardar Ficha';
+    document.getElementById('uploadProgress').textContent='';
+  }
+}
+
+async function deleteFicha(id) {
+  if (!confirm('Eliminar esta ficha? Esta acción no se puede deshacer.')) return;
+  try { await deleteDoc(doc(db,'fichas',id)); showToast('Ficha eliminada'); }
+  catch(err) { showToast('Error al eliminar'); }
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(window._toastT);
+  window._toastT = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// EVENT DELEGATION — avoids onclick on HTML attributes entirely
+document.addEventListener('click', async e => {
+  const btn = e.target.closest('button, [data-edit], [data-delete], [data-remove]');
+  if (!btn) return;
+
+  if (btn.id === 'addFichaBtn') { openModal(); return; }
+  if (btn.id === 'closeModalBtn' || btn.id === 'cancelBtn') { closeModal(); return; }
+  if (btn.id === 'saveBtn') { saveFicha(); return; }
+
+  if (btn.dataset.edit) { openModal(btn.dataset.edit); return; }
+  if (btn.dataset.delete) { deleteFicha(btn.dataset.delete); return; }
+
+  if (btn.dataset.remove !== undefined) {
+    e.stopPropagation();
+    const idx = parseInt(btn.dataset.remove);
+    photoData[idx] = null;
+    document.getElementById('pimg-'+idx).src = '';
+    document.getElementById('pimg-'+idx).style.display = 'none';
+    document.getElementById('pph-'+idx).style.display = 'flex';
+    return;
+  }
+});
+
+document.addEventListener('change', async e => {
+  if (e.target.matches('[data-photo]')) {
+    const idx = parseInt(e.target.dataset.photo);
+    const file = e.target.files[0];
+    if (!file) return;
+    document.getElementById('uploadProgress').textContent = 'Comprimiendo foto '+(idx+1)+'...';
+    try {
+      const compressed = await compressImage(file);
+      photoData[idx] = compressed;
+      document.getElementById('pimg-'+idx).src = compressed;
+      document.getElementById('pimg-'+idx).style.display = 'block';
+      document.getElementById('pph-'+idx).style.display = 'none';
+      document.getElementById('uploadProgress').textContent = '';
+    } catch { showToast('Error al procesar la imagen'); document.getElementById('uploadProgress').textContent=''; }
+  }
+  if (e.target.id === 'searchInput' || e.target.id === 'filterSelect') renderCards();
+});
+
+document.getElementById('modalOverlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modalOverlay')) closeModal();
+});
+
+document.getElementById('searchInput').addEventListener('input', renderCards);
+document.getElementById('filterSelect').addEventListener('change', e => {
+  filterRiesgo = e.target.value; renderCards();
+});
+
+</script>
+</body>
+</html>
